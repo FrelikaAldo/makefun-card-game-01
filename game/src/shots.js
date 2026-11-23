@@ -1,13 +1,15 @@
 // shots.js — ?shot=start|play|win|lose&seed=N staging: a deterministic frame produced by
 // playing the real rules forward from a fresh game with an autopilot. Nothing is faked.
-import { TIMINGS, RULES } from './config.js';
-import { power } from './rules.js';
+import { TIMINGS, RULES, PALETTE, LAYOUT, LANES } from './config.js';
+import { power, resolveRound } from './rules.js';
 import { estimatePower } from './ai.js';
 import { createGame, startDuel, stepGame } from './main.js';
 import { drawFrame } from './render.js';
 
 const DT = 1 / 60;
 const MAX_STEPS = 60 * 60 * 5;
+// A committed card is tossed onto the felt, not placed on it: ~3 degrees off square.
+const COMMIT_TILT = 0.052;
 
 function advance(game, seconds) {
   const steps = Math.max(1, Math.round(seconds / DT));
@@ -64,6 +66,49 @@ function freshDuel(seed, pilotMode) {
   return game;
 }
 
+// A still has to show the moment, not the pause before it: the committed card is tilted as
+// if tossed, the lane that takes the round is still flashing, and the damage number is
+// still rising. Both effects are read off the real rules for this round, never invented.
+function stageResolvedMoment(game, card) {
+  const lane = game.committed.lane;
+
+  const committedView = game.views[game.committed.card.id];
+  if (committedView) {
+    committedView.rot = COMMIT_TILT;
+    committedView.trot = COMMIT_TILT;
+  }
+
+  const report = resolveRound({
+    playerCard: card,
+    cinderCard: game.committed.card,
+    playerLane: lane,
+    cinderLane: lane,
+    playerPrev: game.lastValue.player,
+    cinderPrev: game.lastValue.cinder,
+  });
+
+  const colour = report.winner === 'player'
+    ? PALETTE.player
+    : report.winner === 'cinder' ? PALETTE.cinder : PALETTE.emberHot;
+  game.flashes[lane] = { t: TIMINGS.flashLife * 0.22, colour };
+
+  const events = [];
+  if (report.damage.player > 0) events.push({ target: 'player', amount: report.damage.player });
+  if (report.damage.cinder > 0) events.push({ target: 'cinder', amount: report.damage.cinder });
+  for (const event of events) {
+    const isPlayer = event.target === 'player';
+    game.floaters.push({
+      x: LANES[lane].x + (isPlayer ? -54 : 54),
+      y: LAYOUT.laneY + 76,
+      text: `-${event.amount}`,
+      colour: isPlayer ? PALETTE.player : PALETTE.cinder,
+      t: TIMINGS.floatLife * 0.16,
+      life: TIMINGS.floatLife,
+      size: 34 + event.amount * 3,
+    });
+  }
+}
+
 // A mid-round frame: four rounds already fought, both sides already burned, one card
 // committed face down, five cards in hand.
 function stagePlay(baseSeed) {
@@ -94,6 +139,7 @@ function stagePlay(baseSeed) {
     game.focus = game.committed.lane;
     game.selected = null;
     advance(game, 0.35);
+    stageResolvedMoment(game, pick);
     return game;
   }
   return null;

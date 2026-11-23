@@ -66,6 +66,27 @@ export const CARD = {
   laneH: 132,
   miniW: 76,
   miniH: 108,
+  // Face proportions, measured against the card itself so they hold at every scale:
+  // the corner index is 0.42 of the height and the pip 0.20 of the width, which is what
+  // makes a card legible when the whole frame is shrunk to a thumbnail.
+  indexRatio: 0.42,
+  pipRatio: 0.20,
+  centreRatio: 0.56,
+  indexPad: 0.07,
+};
+
+// Depth: every card floats above the felt, every lane box sits under it.
+export const DEPTH = {
+  // Drop shadow under a card: down-right, blurred, near-black at low alpha.
+  cardShadow: { colour: 'rgba(0,0,0,0.52)', x: 0.055, y: 0.06, blur: 0.17 },
+  // The 1 px inner highlight along a card's top edge.
+  cardEdge: { line: 'rgba(255,250,240,0.55)', glow: 0.10 },
+  // The soft ellipse a card in a lane casts on the felt.
+  laneShadow: { rx: 0.44, ry: 0.075, alpha: 0.5 },
+  // Vignette: darkening that starts at the felt's rim and lands on the frame corners.
+  vignette: { inner: 240, outer: 780, edge: 0.70, cornerInner: 380, cornerOuter: 745, corner: 0.30 },
+  // How far the fan of hand cards may spread before the slots tighten up.
+  handSpan: 520,
 };
 
 export const TIMINGS = {
@@ -94,15 +115,22 @@ export const LAYOUT = {
   laneSlot: { w: 178, h: 216, r: 16 },
   status: { x: 640, y: 494 },
   hand: { cx: 640, cy: 618, spread: 118, arc: 7, tilt: 0.075 },
+  // Both bottom corners carry a stack, so the frame is anchored left and right and the
+  // fan of cards sits dead centre between them.
   deck: { player: { x: 1156, y: 618 }, cinder: { x: 1156, y: 124 } },
+  discard: { x: 124, y: 618 },
 };
 
 // Slot geometry for a fanned hand: cards arc away from the centre and tilt outward.
+// The fan is centred on fan.cx and grows symmetrically — every extra card pushes the
+// outer cards out by the same amount on both sides, and the spread tightens once the
+// fan would run wider than DEPTH.handSpan.
 export function handSlot(index, count, fan = LAYOUT.hand) {
   const mid = (count - 1) / 2;
   const k = index - mid;
+  const spread = count > 1 ? Math.min(fan.spread, DEPTH.handSpan / (count - 1)) : 0;
   return {
-    x: fan.cx + k * fan.spread,
+    x: fan.cx + k * spread,
     y: fan.cy + k * k * fan.arc,
     rot: k * fan.tilt,
   };

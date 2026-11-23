@@ -96,23 +96,32 @@ export function layoutHand(game) {
   const count = game.hand.length;
   const hoverIndex = game.hand.findIndex((card) => card.id === game.hoverCard);
   const selectedIndex = game.hand.findIndex((card) => card.id === game.selected);
+
+  // Lifting a card parts the fan around it. The push is averaged out of every slot so the
+  // fan as a whole stays centred on the frame instead of sliding toward the lifted card.
+  const push = new Array(count).fill(0);
+  if (hoverIndex >= 0) {
+    for (let i = 0; i < count; i += 1) {
+      const delta = i - hoverIndex;
+      if (delta !== 0) push[i] = Math.sign(delta) * 18;
+    }
+  }
+  const drift = count ? push.reduce((sum, value) => sum + value, 0) / count : 0;
+
   for (let i = 0; i < count; i += 1) {
     const card = game.hand[i];
     const view = game.views[card.id];
     if (!view) continue;
     const slot = handSlot(i, count);
-    let x = slot.x;
+    let x = slot.x + push[i] - drift;
     let y = slot.y;
     let rot = slot.rot;
     let scale = 1;
     if (hoverIndex >= 0) {
-      const delta = i - hoverIndex;
-      if (delta === 0) {
+      if (i === hoverIndex) {
         y -= 36;
         rot = 0;
         scale = 1.09;
-      } else {
-        x += Math.sign(delta) * 18;
       }
     } else if (selectedIndex >= 0 && i === selectedIndex) {
       y -= 18;

@@ -1,7 +1,7 @@
 // render.js — every draw call EMBER & ASH makes: the table, the lanes, the cards,
 // the life bars, the title, the win and the loss. No state is changed in here.
 import {
-  VIEW, PALETTE, SUITS, SUIT_BY_KEY, LANES, LAYOUT, CARD, TIMINGS,
+  VIEW, PALETTE, SUITS, SUIT_BY_KEY, LANES, LAYOUT, CARD, DEPTH, TIMINGS,
   clamp, lerp, EASE,
 } from './config.js';
 import { RULE_SUMMARY, RULE_LINES } from './rules.js';
@@ -91,23 +91,43 @@ export function drawSuitGlyph(ctx, glyph, cx, cy, size, colour, opts = {}) {
 export function drawCardFace(ctx, card, w, h, opts = {}) {
   const suit = SUIT_BY_KEY[card.suit];
   const glow = opts.glow || 0;
+  const unit = w / CARD.w;
+  const radius = CARD.r * unit;
+  const pad = w * CARD.indexPad;
+  const indexSize = Math.ceil(h * CARD.indexRatio);
+  const pipSize = Math.ceil(w * CARD.pipRatio);
+  const centreSize = Math.round(h * CARD.centreRatio);
 
+  // The body, lifted off the felt by a shadow thrown down and to the right.
   ctx.save();
-  ctx.shadowColor = glow ? suit.glow : PALETTE.shadow;
-  ctx.shadowBlur = glow ? 26 + glow * 18 : 16;
-  ctx.shadowOffsetY = glow ? 0 : 8;
+  ctx.shadowColor = glow ? suit.glow : DEPTH.cardShadow.colour;
+  ctx.shadowBlur = glow ? 26 + glow * 18 : w * DEPTH.cardShadow.blur;
+  ctx.shadowOffsetX = glow ? 0 : w * DEPTH.cardShadow.x;
+  ctx.shadowOffsetY = glow ? 0 : h * DEPTH.cardShadow.y;
   const body = ctx.createLinearGradient(0, 0, 0, h);
   body.addColorStop(0, '#fbf3e3');
   body.addColorStop(0.55, PALETTE.parchment);
   body.addColorStop(1, PALETTE.parchLow);
   ctx.fillStyle = body;
-  roundRect(ctx, 0, 0, w, h, CARD.r * (w / CARD.w));
+  roundRect(ctx, 0, 0, w, h, radius);
   ctx.fill();
+  ctx.restore();
+
+  // A 1 px highlight along the top edge, fading down: the lip of a card that has thickness.
+  ctx.save();
+  roundRect(ctx, 0, 0, w, h, radius);
+  ctx.clip();
+  const lip = ctx.createLinearGradient(0, 1, 0, Math.max(7, h * 0.07));
+  lip.addColorStop(0, DEPTH.cardEdge.line);
+  lip.addColorStop(0.25, `rgba(255,250,240,${DEPTH.cardEdge.glow})`);
+  lip.addColorStop(1, 'rgba(255,250,240,0)');
+  ctx.fillStyle = lip;
+  ctx.fillRect(1, 1, w - 2, Math.max(7, h * 0.07));
   ctx.restore();
 
   // Suit edge and inner hairline.
   ctx.save();
-  roundRect(ctx, 0.5, 0.5, w - 1, h - 1, CARD.r * (w / CARD.w));
+  roundRect(ctx, 0.5, 0.5, w - 1, h - 1, radius);
   ctx.strokeStyle = suit.colour;
   ctx.globalAlpha = 0.95;
   ctx.lineWidth = Math.max(1.6, w * 0.022);
@@ -115,43 +135,45 @@ export function drawCardFace(ctx, card, w, h, opts = {}) {
   ctx.globalAlpha = 1;
   ctx.restore();
 
-  const pad = w * 0.10;
-  const unit = w / CARD.w;
-
   // Watermark glyph behind the value.
   ctx.save();
-  ctx.globalAlpha = 0.12;
-  drawSuitGlyph(ctx, suit.glyph, w / 2, h * 0.53, w * 0.86, suit.colour);
+  ctx.globalAlpha = 0.10;
+  drawSuitGlyph(ctx, suit.glyph, w * 0.52, h * 0.56, w * 0.84, suit.colour);
   ctx.restore();
 
-  // Corner index: value over glyph, top-left and mirrored bottom-right.
+  // Corner index: the value, sized off the card so it survives a thumbnail, with its pip
+  // set beside it rather than under it — one line, so the big numeral keeps its room.
   ctx.fillStyle = PALETTE.ink;
-  font(ctx, Math.round(30 * unit), 800, UI);
+  font(ctx, indexSize, 800, UI);
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
-  ctx.fillText(String(card.value), pad, pad + 26 * unit);
-  drawSuitGlyph(ctx, suit.glyph, pad + 8 * unit, pad + 40 * unit, 13 * unit, suit.colour);
+  const indexBaseline = pad + indexSize * 0.76;
+  ctx.fillText(String(card.value), pad, indexBaseline);
+  const indexWidth = ctx.measureText(String(card.value)).width;
+  drawSuitGlyph(
+    ctx, suit.glyph,
+    pad + indexWidth + 4 + pipSize * 0.5,
+    indexBaseline - indexSize * 0.38,
+    pipSize, suit.colour,
+  );
 
+  // The same pip mirrored in the far corner, so the card reads right way up either way.
   ctx.save();
-  ctx.translate(w - pad, h - pad);
+  ctx.translate(w - pad - pipSize * 0.5, h - pad - pipSize * 0.5);
   ctx.rotate(Math.PI);
-  ctx.fillStyle = PALETTE.ink;
-  font(ctx, Math.round(30 * unit), 800, UI);
-  ctx.textAlign = 'left';
-  ctx.fillText(String(card.value), 0, 26 * unit);
-  drawSuitGlyph(ctx, suit.glyph, 8 * unit, 40 * unit, 13 * unit, suit.colour);
+  drawSuitGlyph(ctx, suit.glyph, 0, 0, pipSize, suit.colour);
   ctx.restore();
 
-  // The value, huge, dead centre — the one thing that must read at thumbnail size.
+  // The value, huge, low centre — clear of the index above it and the pip below it.
   ctx.fillStyle = PALETTE.ink;
-  font(ctx, Math.round(66 * unit), 800, UI);
+  font(ctx, centreSize, 800, UI);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(String(card.value), w / 2, h * 0.50);
+  ctx.fillText(String(card.value), w * 0.48, h * 0.69);
 
   // Suit band along the bottom edge.
   ctx.save();
-  roundRect(ctx, 0, 0, w, h, CARD.r * unit);
+  roundRect(ctx, 0, 0, w, h, radius);
   ctx.clip();
   const band = ctx.createLinearGradient(0, 0, w, 0);
   band.addColorStop(0, suit.deep);
@@ -206,17 +228,33 @@ function drawPowerBadge(ctx, power, w, h) {
 export function drawCardBack(ctx, card, w, h, opts = {}) {
   const suit = card ? SUIT_BY_KEY[card.suit] : null;
   const unit = w / CARD.w;
+  const radius = CARD.r * unit;
+  // A back is an object too: the same shadow a face-up card throws, so a face-down card
+  // reads as lying on the felt rather than pasted onto it.
   ctx.save();
-  ctx.shadowColor = PALETTE.shadow;
-  ctx.shadowBlur = 14;
-  ctx.shadowOffsetY = 7;
+  ctx.shadowColor = DEPTH.cardShadow.colour;
+  ctx.shadowBlur = w * DEPTH.cardShadow.blur;
+  ctx.shadowOffsetX = w * DEPTH.cardShadow.x;
+  ctx.shadowOffsetY = h * DEPTH.cardShadow.y;
   const body = ctx.createLinearGradient(0, 0, 0, h);
   body.addColorStop(0, '#33232a');
   body.addColorStop(0.55, '#1d1317');
   body.addColorStop(1, '#120b0e');
   ctx.fillStyle = body;
-  roundRect(ctx, 0, 0, w, h, CARD.r * unit);
+  roundRect(ctx, 0, 0, w, h, radius);
   ctx.fill();
+  ctx.restore();
+
+  // The lit lip along the top edge, in bone rather than white: soot catches less light.
+  ctx.save();
+  roundRect(ctx, 0, 0, w, h, radius);
+  ctx.clip();
+  const lip = ctx.createLinearGradient(0, 1, 0, Math.max(7, h * 0.07));
+  lip.addColorStop(0, 'rgba(255,235,210,0.34)');
+  lip.addColorStop(0.3, 'rgba(255,235,210,0.07)');
+  lip.addColorStop(1, 'rgba(255,235,210,0)');
+  ctx.fillStyle = lip;
+  ctx.fillRect(1, 1, w - 2, Math.max(7, h * 0.07));
   ctx.restore();
 
   // Woven lattice, both diagonals, so the face never reads as a plain card.
@@ -403,11 +441,22 @@ export function drawTable(ctx, game) {
     ctx.restore();
   }
 
-  // Vignette last, so it sits over the felt and the embers alike.
-  const vignette = ctx.createRadialGradient(cx, cy, 240, cx, cy, 780);
+  // Vignette last, so it sits over the felt and the embers alike: the felt dims at its
+  // rim, and a second pass lands the frame's corners in shadow.
+  const v = DEPTH.vignette;
+  const vignette = ctx.createRadialGradient(cx, cy, v.inner, cx, cy, v.outer);
   vignette.addColorStop(0, 'rgba(0,0,0,0)');
-  vignette.addColorStop(1, 'rgba(0,0,0,0.72)');
+  vignette.addColorStop(1, `rgba(0,0,0,${v.edge})`);
   ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+
+  const corners = ctx.createRadialGradient(
+    VIEW.width / 2, VIEW.height / 2, v.cornerInner,
+    VIEW.width / 2, VIEW.height / 2, v.cornerOuter,
+  );
+  corners.addColorStop(0, 'rgba(0,0,0,0)');
+  corners.addColorStop(1, `rgba(0,0,0,${v.corner})`);
+  ctx.fillStyle = corners;
   ctx.fillRect(0, 0, VIEW.width, VIEW.height);
 }
 
@@ -518,12 +567,49 @@ function drawLaneSlot(ctx, game, index) {
   const y = LAYOUT.laneY - h / 2;
   const focused = game.phase === 'play' && game.focus === index;
   const hovered = game.phase === 'play' && game.hoverLane === index;
+  const occupied = Boolean(game.laneCards.cinder[index] || game.laneCards.player[index]);
+  const suit = SUITS[index % SUITS.length];
 
+  // Grounded shadow: the card in this lane is resting on the felt, not hovering above it.
+  if (occupied) {
+    const s = DEPTH.laneShadow;
+    ctx.save();
+    ctx.globalAlpha = s.alpha;
+    ctx.fillStyle = 'rgba(0,0,0,0.92)';
+    ctx.shadowColor = 'rgba(0,0,0,0.9)';
+    ctx.shadowBlur = 22;
+    ctx.beginPath();
+    ctx.ellipse(lane.x, LAYOUT.laneY + h * 0.31, w * s.rx, h * s.ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // The box: a fixed dark base so all three lanes read alike even where the felt behind
+  // them is darker, then a shallow fill plus an inner glow so even an empty lane has depth.
   ctx.save();
-  ctx.fillStyle = focused || hovered ? 'rgba(255,138,61,0.09)' : 'rgba(255,240,225,0.022)';
+  ctx.fillStyle = 'rgba(16,10,12,0.62)';
+  roundRect(ctx, x, y, w, h, r);
+  ctx.fill();
+  ctx.fillStyle = focused || hovered ? 'rgba(255,138,61,0.12)' : 'rgba(255,240,225,0.030)';
   roundRect(ctx, x, y, w, h, r);
   ctx.fill();
 
+  const inner = ctx.createRadialGradient(lane.x, LAYOUT.laneY - 12, 6, lane.x, LAYOUT.laneY, w * 0.88);
+  inner.addColorStop(0, occupied ? 'rgba(255,170,110,0.06)' : 'rgba(255,182,126,0.28)');
+  inner.addColorStop(0.62, occupied ? 'rgba(255,150,90,0.02)' : 'rgba(255,150,90,0.11)');
+  inner.addColorStop(1, 'rgba(255,150,90,0)');
+  ctx.fillStyle = inner;
+  roundRect(ctx, x, y, w, h, r);
+  ctx.fill();
+
+  // Inset lip along the top of the box: the same catch of light the cards get.
+  ctx.strokeStyle = occupied ? 'rgba(255,240,225,0.09)' : 'rgba(255,240,225,0.16)';
+  ctx.lineWidth = 1;
+  roundRect(ctx, x + 1.5, y + 1.5, w - 3, h - 3, r - 1);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
   ctx.setLineDash([7, 7]);
   ctx.lineWidth = focused || hovered ? 2 : 1.4;
   ctx.strokeStyle = focused || hovered ? PALETTE.ember : 'rgba(188,175,166,0.22)';
@@ -536,13 +622,29 @@ function drawLaneSlot(ctx, game, index) {
   ctx.setLineDash([]);
   ctx.restore();
 
-  // Lane name, small and spaced, above the slot.
+  // An empty lane is not a void: an engraved suit watermark holds its middle.
+  if (!occupied) {
+    const markSize = w * 0.52;
+    ctx.save();
+    ctx.globalAlpha = focused || hovered ? 0.34 : 0.26;
+    drawSuitGlyph(ctx, suit.glyph, lane.x, LAYOUT.laneY + 8, markSize, suit.colour, {
+      outline: true,
+      line: Math.max(1.4, w * 0.011),
+    });
+    ctx.restore();
+    ctx.save();
+    ctx.globalAlpha = focused || hovered ? 0.16 : 0.12;
+    drawSuitGlyph(ctx, suit.glyph, lane.x, LAYOUT.laneY + 8, markSize, suit.colour);
+    ctx.restore();
+  }
+
+  // Lane name, small caps, inside the box's top edge so all three lanes read the same.
   ctx.save();
   ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  font(ctx, 11, 700, UI);
-  ctx.fillStyle = focused || hovered ? PALETTE.emberHot : PALETTE.ashDim;
-  spacedText(ctx, lane.name, lane.x, y - 8, 3, 'center');
+  ctx.textBaseline = 'middle';
+  font(ctx, 10, 700, UI);
+  ctx.fillStyle = focused || hovered ? PALETTE.emberHot : 'rgba(188,175,166,0.72)';
+  spacedText(ctx, lane.name, lane.x, y + 17, 3.4, 'center');
   ctx.restore();
 
   // A flash in the winner's colour when the lane lands.
@@ -670,6 +772,34 @@ function drawDeckPile(ctx, game, side) {
 export function drawDecks(ctx, game) {
   drawDeckPile(ctx, game, 'player');
   drawDeckPile(ctx, game, 'cinder');
+}
+
+// The discard pile anchors the bottom-left corner, mirroring the deck on the right: two
+// stacks, one at each edge, with the fan of cards centred between them.
+function drawDiscard(ctx, game) {
+  const spot = LAYOUT.discard;
+  const miniScale = CARD.miniW / CARD.w;
+  const rounds = clamp(game.round - 1, 0, 3);
+  for (let i = rounds; i >= 0; i -= 1) {
+    drawCard(ctx, null, {
+      x: spot.x - i * 1.5,
+      y: spot.y + i * 2.5,
+      rot: (i - 1) * -0.02,
+      scale: miniScale,
+      flip: 1,
+      alpha: i === 0 ? 0.5 : 0.95,
+    }, {});
+  }
+  ctx.save();
+  ctx.textAlign = 'center';
+  font(ctx, 11, 700, UI);
+  ctx.fillStyle = PALETTE.ashDim;
+  spacedText(ctx, `${Math.max(0, (game.round - 1) * 2)} DISCARDED`, spot.x, spot.y + (CARD.miniH / 2) + 16, 2, 'center');
+  ctx.restore();
+}
+
+export function drawDiscardPile(ctx, game) {
+  drawDiscard(ctx, game);
 }
 
 // ---------------------------------------------------------------- intent and status
@@ -1071,6 +1201,7 @@ export function drawFrame(ctx, game) {
   }
 
   drawDecks(ctx, game);
+  drawDiscardPile(ctx, game);
   drawLanes(ctx, game);
   drawCinderHand(ctx, game);
   drawHud(ctx, game);
